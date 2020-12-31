@@ -1,0 +1,165 @@
+<style>
+    .js-loader {
+        height: 100%;
+        width: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+        background-color: rgba(0, 0, 0, 0.8);
+        z-index: 9999;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .js-loader div {
+        text-align: center;
+        font-size: 1.25em;
+        color: white;
+    }
+
+    #canvas {
+        position:fixed;
+        left:0;
+        top:0;
+        width:100%;
+        height:100%;
+    }
+</style>
+<script type="text/javascript">
+    const threshold = 0.75;
+    const TEMP_SRC = "web/led-crop.png";
+    let streaming = false;
+    let tagColor;
+    let video;
+    let srcIcon;
+    let cap;
+    let frame;
+    let gray;
+    let width;
+    let height;
+    let stream;
+    let template;
+
+    function hideLoading() {
+        document.getElementById("divmask").style.visibility="hidden";
+    }
+
+    function startCamera() {
+        if (streaming) 
+            return;
+        console.log('start camera');
+        navigator.mediaDevices.getUserMedia({video: true, audio: false})
+            .then(function(s) {
+            stream = s;
+            video.srcObject = s;
+            video.play();
+        })
+        .catch(function(err) {
+            console.log("start camera error: " + err);
+        });
+
+        video.addEventListener("canplay", function(ev){
+            if (!streaming) {
+                tagColor = new cv.Scalar(255, 0, 0, 255);
+                width = window.innerWidth > video.videoWidth? video.videoWidth: window.width;
+                height = video.videoHeight / (video.videoWidth/width);
+                video.setAttribute("width", width);
+                video.setAttribute("height", height);
+                console.log('preview size: '+width+'x'+height);
+                streaming = true;
+                frame = new cv.Mat(height, width, cv.CV_8UC4);
+                gray = new cv.Mat();
+                cap = new cv.VideoCapture(video);
+            }
+            requestAnimationFrame(processVideo);
+        }, false);
+    }
+
+    function processVideo(){
+        if (!streaming)
+            return;
+        cap.read(frame);
+        cv.cvtColor(frame, gray, cv.COLOR_BGR2GRAY);
+        let res = new cv.Mat();
+        cv.matchTemplate(gray,template,res,cv.TM_CCOEFF_NORMED);
+        var newDst = [];
+        var start = 0;
+        var end = res.cols;
+        var count = 0;
+        for (var i = 0; i < res.rows; i++) {
+            newDst[i] = [];
+            for (var k = 0; k < res.cols; k++) {
+                newDst[i][k] = res.data32F[start];
+                if (newDst[i][k] > threshold) {
+                    let maxPoint = {
+                        "x": k,
+                        "y": i
+                    }
+                    let point = new cv.Point(k + template.cols, i + template.rows);
+                    cv.rectangle(frame, maxPoint, point, tagColor, 2, cv.LINE_8, 0);
+                    console.log('matched template ('+point.x+','+point.y+')');
+                    count++;
+                    delete point;
+                }
+                start++;
+            }
+            start = end;
+            end = end + res.cols;
+        }
+        console.log('matched template: '+count);
+        cv.imshow('the-canvas', frame); // display the output to canvas
+        delete res;
+        requestAnimationFrame(processVideo);
+    }
+
+    function onTemplateLoaded(){
+        console.log('src-image.js is ready');
+        template = new cv.Mat();
+        let original = cv.imread(srcIcon); // load the image from <img>
+        cv.cvtColor(original, template, cv.COLOR_BGR2GRAY);
+        console.log('template size: '+template.size().width+'x'+template.size().height);
+        startCamera();
+        hideLoading();
+    }
+
+    function onOpenCvReady() {
+        cv['onRuntimeInitialized']=()=>{
+            console.log('opencv.js is ready');
+            video = document.getElementById("video");
+            srcIcon = document.getElementById('src-image');
+            //srcIcon.crossOrigin = "Anonymous";
+            srcIcon.onload = function(){
+                onTemplateLoaded();
+            }
+            srcIcon.src=TEMP_SRC;
+        }
+    }
+</script>
+<script type="text/javascript">
+    var Module = {
+        locateFile: function (name) {
+        let files = {
+            "opencv.wasm": 'web/opencv.wasm'
+        }
+        return files[name]
+    },
+    preRun: [() => {
+        //Module.FS_createPreloadedFile("/", "face.xml", "data/haarcascade_frontalface_default.xml",
+        //    true, false);
+    }],
+    postRun: [
+        //run
+    ]};
+</script>
+<script src="web/opencv.js" async onload="onOpenCvReady();" type="text/javascript"></script>
+<body style='margin : 0px; overflow: hidden;'>
+    <img id="src-image" alt="" style="display:none;">
+    <div style="display:none;">
+        <video id="video" class="hidden">Your browser does not support the video tag.</video>
+    </div>
+    <div class="js-loader" id="divmask" onclick="hideLoading();">
+        <div>Loading, please wait...</div>
+    </div>
+    <canvas id="the-canvas"></canvas>
+</body>
